@@ -225,7 +225,7 @@ latest_checkpoint.txt     完成后最新 checkpoint 的相对路径
 ```
 
 checkpoint 通常包含策略、价值网络和观测归一化参数，可用于后续推理；这里不承诺保存优化器的
-完整训练状态，也没有实现完整断点续训或本机 checkpoint 回放脚本。后续回放应使用该次运行的模型、
+完整训练状态，也没有实现完整断点续训。本机 checkpoint 回放已提供 `play_ppo.py`；回放使用该次运行的模型、
 任务配置、观测构造和动作限速，不能只拷贝神经网络权重。
 中断或失败会在 metadata 记录状态；已完成保存的 checkpoint 保留。
 Brax 可能因采样批次/评估周期取整而略超出请求总步数，metadata 记录实际 checkpoint 步数。
@@ -318,3 +318,28 @@ NumPy 与 JAX 不保证不同后端生成相同噪声序列，后端对照仅对
 本机测试覆盖命名传感器与物理腱长/腱速一致、噪声边界、seed 重复、JIT/vmap，
 并验证加入观测噪声不改变固定动作下的物理轨迹、执行器力和奖励。
 MJX 真引擎和 Brax 训练的最新本机 CPU 检查记录见 `server/VALIDATION.md`；服务器 GPU 验收仍需执行。
+
+## 下载服务器训练成果并在本机回放
+
+下载完整的 `runs/finger-height-.../`，保留 `hand.xml`、`task_config.json`、`metadata.json`、
+`source/`、`latest_checkpoint.txt` 和 `checkpoints/` 的相对目录结构。
+不要只下载最后的 checkpoint：策略还需要当次模型、环境观测构造和动作限速。
+
+本机使用服务器准备阶段创建的 `.venv-server-check`（或安装了同版核心依赖的 Python）：
+
+```bash
+/home/zhili/aerofuke/.venv-server-check/bin/python /home/zhili/aerofuke/najiushi/rl/play_ppo.py \
+  --run-dir /下载到本机的完整训练目录 --render --episodes 3
+```
+
+`play_ppo.py` 强制 CPU 策略推理，恢复 Brax 保存的策略及观测归一化参数，
+通过普通 MuJoCo 打开本机窗口；不需要 V100 或 CUDA 动态库设置。
+优先读取运行目录的 `source/finger_env.py`、配置和模型快照，并验证模型 SHA256。
+当前工作区后来改过模型或观测，不会影响该次回放。
+默认加载 `latest_checkpoint.txt` 指向的权重，可用 `--checkpoint 000001032192` 指定其他保存点。
+
+不带 `--render` 可无窗口评估。结果保存为运行目录中新建的 `replay-时间/trajectory.csv` 和
+`summary.json`，统计总奖励、首次连续保持成功时间、是否曾达标和最终是否达标。
+策略输出采用确定性模式，但传感器噪声仍按训练配置启用。
+普通 MuJoCo 与 MJX 的物理和随机数实现存在细小差异，本机回放是直观检查和补充评估，
+不能保证奖励与服务器逐位一致。

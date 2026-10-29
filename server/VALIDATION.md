@@ -18,7 +18,17 @@ Verified with real installed libraries:
 - All 24 local unit tests passed in the new isolated dependency environment.
 - Shell scripts pass `bash -n` and server Python scripts compile.
 
-Real Brax PPO smoke-run result will be recorded below after completion.
+A real CPU Brax PPO smoke run reached its initial policy evaluation (reward
+approximately 0.743). The subsequent training phase did not complete in a
+reasonable local CPU run time, so this local run was stopped. Checkpoint saving
+and PPO completion are NOT verified by that CPU run; use the V100 smoke run
+for those acceptance steps. No remote/server training process was stopped.
+
+Replay preparation subsequently verified a real Brax checkpoint save/load
+round trip with temporary **untrained** network weights, saved observation
+normalization, and one complete native MuJoCo replay episode. This check was
+run outside the local execution sandbox after Orbax filesystem writes stalled
+inside it. This validates the replay plumbing, not the user's trained policy.
 
 Not verified locally: V100 CUDA kernels, GPU memory usage, GPU training speed,
 long-run learning convergence, or sim-to-real transfer. The server must run
