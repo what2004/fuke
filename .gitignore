@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+.venv-server/
+.venv-server-check/
+dist/
+server/cache/
+server/logs/
+server/installed-server.txt
+.vscode/
+najiushi/rl/runs/
+.agents/
+.aws/
+.codex/
+*.pyo

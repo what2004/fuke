@@ -1,0 +1,152 @@
+<mujoco model="palm_and_index_finger">
+  <!-- 长度单位：米；角度单位：度。食指伸直时沿 +Y 方向。 -->
+  <!-- 关节限位：index_mcp = -95°..5°，index_pip = -90°..0°，index_dip = -81°..0°。
+       关节轴为 -X，负角度使伸直的手指向 +Z 弯曲；
+       body 上不写 gravcomp，重力沿 -Z，向下运动受到伸直侧限位约束；
+       安装座固定在世界中；手掌无关节，与安装座刚性连接，仅手指关节可动。 -->
+  <!-- 走线拓扑参照本机 Aero right_hand.xml 的食指：
+       近节长度按 45/43 缩放，中节按 28/22 缩放，并转换局部坐标轴。
+       导向轮为理想绕行表面，不模拟轴承转动或绳索与指节外壳的接触。
+       弹簧刚度沿用参考值；自然长度按当前伸直姿态校准，无预拉伸，
+       springlength 的 0..L0 为松弛区间，仅在超出 L0 后产生弹性拉力。
+       这是参考机构的适配模型，尚未用实物测量标定。 -->
+  <compiler angle="degree" />
+  <option timestep="0.001" gravity="0 0 -9.81" integrator="implicitfast" />
+  <default>
+    <joint type="hinge" axis="-1 0 0" limited="true" damping="0.002" armature="0.00001" solreflimit="0.005 1" solimplimit="0.99 0.999 0.001" />
+    <site size="0.0015" rgba="1 0.25 0.1 1" group="0" />
+    <!-- 手部实体使用碰撞类别 2，只接收类别 1（外部物体）。
+         手部实体之间不碰撞；外部物体默认 contype=1、conaffinity=1 即可。 -->
+    <default class="hand_collision">
+      <geom contype="2" conaffinity="1" />
+    </default>
+    <!-- 导向轮只供肌腱绕行，轴沿 X；不参与碰撞和质量计算。 -->
+    <default class="tendon_pulley">
+      <geom type="cylinder" zaxis="1 0 0" contype="0" conaffinity="0" density="0" rgba="0.3 0.3 0.35 0.5" group="2" />
+    </default>
+    <geom density="1000" friction="0.8 0.01 0.001" />
+  </default>
+  <visual>
+    <headlight ambient="0.4 0.4 0.4" diffuse="0.7 0.7 0.7" />
+  </visual>
+  <statistic center="0 0.04 0.12" extent="0.25" />
+  <worldbody>
+    <light pos="0.2 -0.2 0.5" dir="-0.2 0.2 -0.5" />
+    <!-- 安装座无 joint，固定在世界；前缘 y=-0.045 与手掌后缘相接。 -->
+    <body name="mount" pos="0 -0.045 0.12">
+      <geom name="mount_geom" class="hand_collision" type="box" pos="0 -0.01 0" size="0.025 0.01 0.015" rgba="0.25 0.28 0.32 1" />
+      <!-- 手掌：宽 8 cm，长 9 cm，厚 2 cm；size 为半尺寸。 -->
+      <body name="palm" pos="0 0.045 0">
+        <!-- 均匀长方体，密度 1000 kg/m³；质心在手掌中心。 -->
+        <inertial pos="0 0 0" mass="0.144" diaginertia="0.000102 0.0000816 0.000174" />
+        <!-- 无 joint：手掌相对安装座固定。 -->
+        <geom name="palm_geom" class="hand_collision" type="box" size="0.04 0.045 0.01" rgba="0.65 0.70 0.78 0.2" />
+        <!-- 近节：长 4.5 cm，半径 0.9 cm。关节位于圆柱根部。 -->
+        <!-- 不做重力补偿；关节限位决定允许弯曲的方向。
+             手部碰撞类别过滤所有内部接触，避免简化几何阻碍关节运动。 -->
+        <body name="index_proximal" pos="-0.025 0.045 0">
+          <!-- 均匀实心圆柱：质心在中点；惯量顺序为 Ixx Iyy Izz（kg·m²），圆柱轴沿 Y。 -->
+          <inertial pos="0 0.0225 0" mass="0.0114511052223" diaginertia="2.16425888702e-06 4.63769761505e-07 2.16425888702e-06" />
+          <joint name="index_mcp" range="-95 5" />
+          <geom name="index_proximal_geom" class="hand_collision" type="cylinder" fromto="0 0 0 0 0.045 0" size="0.009" rgba="0.90 0.65 0.42 0.2" />
+          <!-- 中节：长 2.8 cm，半径 0.8 cm。 -->
+          <body name="index_middle" pos="0 0.045 0">
+            <!-- 均匀实心圆柱：质心在中点；惯量顺序为 Ixx Iyy Izz（kg·m²），圆柱轴沿 Y。 -->
+            <inertial pos="0 0.014 0" mass="0.00562973403523" diaginertia="4.57885034866e-07 1.80151489127e-07 4.57885034866e-07" />
+            <joint name="index_pip" range="-90 0" />
+            <geom name="index_middle_geom" class="hand_collision" type="cylinder" fromto="0 0 0 0 0.028 0" size="0.008" rgba="0.94 0.73 0.50 0.2" />
+            <!-- 远节：长 2.2 cm，半径 0.7 cm。 -->
+            <body name="index_distal" pos="0 0.028 0">
+              <!-- 均匀实心圆柱：质心在中点；惯量顺序为 Ixx Iyy Izz（kg·m²），圆柱轴沿 Y。 -->
+              <inertial pos="0 0.011 0" mass="0.00338663688057" diaginertia="1.7808065597e-07 8.2972603574e-08 1.7808065597e-07" />
+              <joint name="index_dip" range="-81 0" />
+              <!-- 指尖端面中心，仅用于显示和读取世界坐标，不参与碰撞。 -->
+              <site name="index_tip" pos="0 0.022 0" size="0.0015" rgba="0.1 1 0.2 1" />
+              <geom name="index_distal_geom" class="hand_collision" type="cylinder" fromto="0 0 0 0 0.022 0" size="0.007" rgba="0.98 0.81 0.60 0.2" />
+              <!-- Aero 食指走线：局部 (x,y,z) → (x,z,-y)，按本指节长度缩放。 -->
+              <site name="if_dip_tendon0_s0" pos="0 0.003 0.0086" group="0" size="0.001" rgba="1 0.3 0.1 1" />
+              <geom name="if_dip_tendon0_g0" pos="0 0.002 0.006" class="tendon_pulley" size="0.0025 0.005" />
+              <site name="if_dip_tendon0_s2" pos="0 0.0075 0.0015" group="0" size="0.001" rgba="1 0.3 0.1 1" />
+              <!-- 辅助腱相对 2.5 mm 半径导向轮留 1 mm 余量，避免恰好相切的退化路径。 -->
+              <site name="if_dip_tendon1_s0" pos="0 0.015 -0.0035" group="0" size="0.001" rgba="1 0.3 0.1 1" />
+              <geom name="if_dip_tendon1_g0" pos="0 0 -0" class="tendon_pulley" size="0.0025 0.005" />
+              <site name="if_dip_tendon1_s1" pos="0 -0.002 -0.0035" group="0" size="0.001" rgba="1 0.3 0.1 1" />
+            </body>
+            <!-- Aero 食指走线：局部 (x,y,z) → (x,z,-y)，按本指节长度缩放。 -->
+            <site name="if_middle_spring0_s0" pos="0 0.00381818182 -0.00509090909" group="0" size="0.001" rgba="1 0.3 0.1 1" />
+          </body>
+          <!-- Aero 食指走线：局部 (x,y,z) → (x,z,-y)，按本指节长度缩放。 -->
+          <site name="if_proximal_tendon0_s0" pos="0 0.00994186047 0.0115116279" group="0" size="0.001" rgba="1 0.3 0.1 1" />
+          <geom name="if_proximal_tendon0_g0" pos="0 0.00994186047 0.00784883721" class="tendon_pulley" size="0.00261627907 0.00523255814" />
+          <site name="if_proximal_tendon0_s1" pos="0 0.014127907 0.00659302326" group="0" size="0.001" rgba="1 0.3 0.1 1" />
+          <geom name="if_proximal_tendon2" pos="0 0.0181046512 0.00596511628" class="tendon_pulley" size="0.00261627907 0.00523255814" />
+          <site name="if_proximal_tendon0_s2" pos="0 0.0181046512 0.00230232558" group="0" size="0.001" rgba="1 0.3 0.1 1" />
+          <geom name="if_proximal_tendon3" pos="0 0.0338023256 0.00596511628" class="tendon_pulley" size="0.00261627907 0.00523255814" />
+          <site name="if_proximal_tendon0_s3" pos="0 0.0313953488 0.00261627907" group="0" size="0.001" rgba="1 0.3 0.1 1" />
+          <site name="if_proximal_tendon0_s4" pos="0 0.0348488372 0.00261627907" group="0" size="0.001" rgba="1 0.3 0.1 1" />
+          <geom name="if_proximal_tendon1_g0" pos="0 0.045 0.00188372093" class="tendon_pulley" size="0.00313953488 0.00523255814" />
+          <site name="if_proximal_tendon1_s0" pos="0 0.0418604651 0.00502325581" group="0" size="0.001" rgba="1 0.3 0.1 1" />
+          <site name="if_proximal_tendon1_s1" pos="0 0.036627907 -0.00125581395" group="0" size="0.001" rgba="1 0.3 0.1 1" />
+          <site name="if_proximal_spring0_s0" pos="0 0.0115116279 -0.00125581395" group="0" size="0.001" rgba="1 0.3 0.1 1" />
+          <site name="if_proximal_spring0_s1" pos="0 0.0418604651 -0.00125581395" group="0" size="0.001" rgba="1 0.3 0.1 1" />
+          <site name="if_proximal_spring1_s0" pos="0 0.00418604651 -0.00313953488" group="0" size="0.001" rgba="1 0.3 0.1 1" />
+        </body>
+        <site name="tendon_base" pos="-0.025 0.020 0.017" />
+        <site name="if_f_spring1_s1" pos="-0.025 0.0414418605 -0.00523255814" group="0" size="0.001" rgba="1 0.3 0.1 1" />
+        <geom name="if_f_spring1_g0" pos="-0.025 0.0444767442 -0" class="tendon_pulley" size="0.00313953488 0.00523255814" />
+      </body>
+    </body>
+  </worldbody>
+  <!-- 红：主动屈曲腱；蓝：远节辅助走线（仅路径，无独立施力）；黄/青：伸展侧弹簧腱。 -->
+  <tendon>
+    <spatial name="index_flexor" width="0.0006" rgba="0.9 0.15 0.05 1">
+      <site site="tendon_base" />
+      <!-- 跨 MCP 的入口采用最短绕行；原 sidesite 会在大弯曲时切换长弧，造成长度跳变。 -->
+      <geom geom="if_proximal_tendon0_g0" />
+      <site site="if_proximal_tendon0_s1" />
+      <geom geom="if_proximal_tendon2" sidesite="if_proximal_tendon0_s2" />
+      <site site="if_proximal_tendon0_s3" />
+      <geom geom="if_proximal_tendon3" sidesite="if_proximal_tendon0_s4" />
+      <site site="if_proximal_tendon0_s4" />
+      <geom geom="if_dip_tendon0_g0" sidesite="if_dip_tendon0_s0" />
+      <site site="if_dip_tendon0_s2" />
+    </spatial>
+    <spatial name="index_distal_route" width="0.0006" rgba="0.1 0.3 0.9 1">
+      <site site="if_dip_tendon1_s0" />
+      <geom geom="if_dip_tendon1_g0" sidesite="if_dip_tendon1_s1" />
+      <site site="if_dip_tendon1_s1" />
+      <geom geom="if_proximal_tendon1_g0" sidesite="if_proximal_tendon1_s0" />
+      <site site="if_proximal_tendon1_s1" />
+    </spatial>
+    <spatial name="index_pip_return" width="0.0006" rgba="0.8 0.7 0.1 1" stiffness="4000" damping="0.5" springlength="0 0.0382935069">
+      <site site="if_proximal_spring0_s0" />
+      <site site="if_proximal_spring0_s1" />
+      <geom geom="if_proximal_tendon1_g0" />
+      <site site="if_middle_spring0_s0" />
+    </spatial>
+    <spatial name="index_mcp_return" width="0.0006" rgba="0.1 0.7 0.6 1" stiffness="352" damping="0.5" springlength="0 0.008022042341">
+      <site site="if_f_spring1_s1" />
+      <geom geom="if_f_spring1_g0" />
+      <site site="if_proximal_spring1_s0" />
+    </spatial>
+  </tendon>
+  <!-- q_DIP = 0.9 * q_PIP；这是有限刚度的数值约束。 -->
+  <equality>
+    <joint name="dip_pip_coupling" joint1="index_dip" joint2="index_pip" polycoef="0 0.9 0 0 0" solref="0.005 1" solimp="0.99 0.999 0.001" />
+  </equality>
+  <!-- ctrl 为目标主动肌腱长度（m）；0.115 释放，0.063 接近完全弯曲。
+       放长由两条空间弹簧腱回位；第一入口不强制绕行侧，其余固定走线保留。
+       仅允许拉力，最大 5 N；辅助蓝色路线与 Aero 一样不单独驱动。 -->
+  <actuator>
+    <position name="index_tendon_length" tendon="index_flexor" kp="1000" kv="5" ctrllimited="true" ctrlrange="0.063 0.115" forcelimited="true" forcerange="-5 0" />
+  </actuator>
+  <!-- 与 Aero 的 len_if 接口对齐；传感器供观测，不改变执行器内部算力。 -->
+  <sensor>
+    <tendonpos name="len_if" tendon="index_flexor" />
+    <tendonvel name="vel_if" tendon="index_flexor" />
+  </sensor>
+  <!-- 加载 home 关键帧可初始化为伸直、肌腱释放状态。 -->
+  <keyframe>
+    <key name="home" qpos="0 0 0" ctrl="0.115" />
+  </keyframe>
+</mujoco>

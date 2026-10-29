@@ -1,0 +1,21 @@
+{
+  "target_height": 0.16,
+  "height_tolerance": 0.005,
+  "speed_limit": 0.01,
+  "hold_seconds": 1.0,
+  "control_dt": 0.02,
+  "episode_seconds": 8.0,
+  "max_command_speed": 0.02,
+  "height_reward_scale": 0.01,
+  "tip_speed_scale": 0.1,
+  "joint_speed_scale": 10.0,
+  "tracking_weight": 1.0,
+  "tip_speed_weight": 0.02,
+  "joint_speed_weight": 0.01,
+  "command_change_weight": 0.01,
+  "holding_weight": 0.2,
+  "success_weight": 0.5,
+  "failure_penalty": 5.0,
+  "tendon_noise_level": 1.0,
+  "tendon_length_noise_m": 0.005
+}

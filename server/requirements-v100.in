@@ -1,0 +1,6 @@
+-r requirements-core.lock
+jax[cuda12]==0.8.2
+# cuDNN 9.8 supports Volta; newer cuDNN builds drop SM70 even on CUDA 12.
+nvidia-cudnn-cu12==9.8.0.87
+# Preserve older-GPU support and keep single-GPU training on a conservative NCCL.
+nvidia-nccl-cu12==2.27.7

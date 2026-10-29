@@ -1,0 +1,6 @@
+{
+  "start_seconds": 4.0,
+  "duration_seconds": 0.1,
+  "force_world_n": [0.0, 0.0, -0.1],
+  "command_length_m": 0.100
+}
