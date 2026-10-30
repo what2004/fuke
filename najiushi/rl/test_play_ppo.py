@@ -6,10 +6,18 @@ import shutil
 import tempfile
 import unittest
 
-from play_ppo import load_run
+from play_ppo import load_run, normalize_observation_size
 
 
 class ReplayTests(unittest.TestCase):
+    def test_accepts_brax_serialized_observation_shape(self):
+        self.assertEqual(normalize_observation_size({
+            'shape': [16], 'dtype': 'unserializable object: float32'}), 16)
+        self.assertEqual(normalize_observation_size(16), 16)
+        for size in (15, {'shape': [15]}, {'shape': [1, 16]}, {'state': 16}):
+            with self.assertRaises(ValueError):
+                normalize_observation_size(size)
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.run = Path(self.tmp.name)

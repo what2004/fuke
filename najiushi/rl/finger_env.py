@@ -21,6 +21,20 @@ import mujoco
 import numpy as np
 
 
+# Body-local positions, in meters. Three points per cylinder plus the fingertip.
+PUSH_POINTS = {
+    **{f'{name}_{percent}': (body, (0., length*percent/100, 0.))
+       for name, body, length in [('proximal', 'index_proximal', .045),
+                                  ('middle', 'index_middle', .028),
+                                  ('distal', 'index_distal', .022)]
+       for percent in (25, 50, 75)},
+    'tip': ('index_distal', (0., .022, 0.)),
+}
+# World YZ plane: the model has hinges about X and no lateral bending DOF.
+PUSH_DIRECTIONS = np.array([[0., np.cos(a), np.sin(a)]
+                            for a in np.arange(8)*np.pi/4])
+
+
 @dataclass(frozen=True)
 class TaskConfig:
     target_height: float = 0.16
@@ -42,6 +56,15 @@ class TaskConfig:
     failure_penalty: float = 5.0
     tendon_noise_level: float = 1.0
     tendon_length_noise_m: float = 0.005
+    require_low_speed: bool = True
+    push_enabled: bool = False
+    push_probability: float = .8
+    push_force_min_n: float = 1.
+    push_force_max_n: float = 4.
+    push_start_min_s: float = 3.
+    push_start_max_s: float = 5.
+    push_duration_min_s: float = .5
+    push_duration_max_s: float = 2.
 
     @classmethod
     def load(cls, path=None):
@@ -59,6 +82,20 @@ class TaskConfig:
             raise ValueError("Reward weights and failure penalty must be nonnegative")
         if config.tendon_noise_level < 0 or config.tendon_length_noise_m < 0:
             raise ValueError("Tendon observation noise must be nonnegative")
+        if type(config.require_low_speed) is not bool or type(config.push_enabled) is not bool:
+            raise ValueError('require_low_speed and push_enabled must be booleans')
+        if not 0 <= config.push_probability <= 1:
+            raise ValueError('push_probability must be in [0, 1]')
+        for low, high in [('push_force_min_n', 'push_force_max_n'),
+                          ('push_start_min_s', 'push_start_max_s'),
+                          ('push_duration_min_s', 'push_duration_max_s')]:
+            if not 0 <= values[low] <= values[high]:
+                raise ValueError(f'Invalid push range: {low}, {high}')
+        if config.push_duration_min_s <= 0:
+            raise ValueError('Push duration must be positive')
+        if config.push_enabled and (config.push_start_max_s + config.push_duration_max_s
+                                    + config.hold_seconds >= config.episode_seconds):
+            raise ValueError('Leave enough time after the latest push for recovery and holding')
         return config
 
 
@@ -86,6 +123,12 @@ class FingerHeightEnv:
             raise ValueError("episode_seconds must be an integer multiple of control_dt")
         self._velocity = np.zeros(6)
         self._ready = False
+        if self.config.push_enabled:
+            dt = self.model.opt.timestep
+            for value in (self.config.push_start_min_s, self.config.push_start_max_s,
+                          self.config.push_duration_min_s, self.config.push_duration_max_s):
+                if not np.isclose(value/dt, round(value/dt), rtol=0, atol=1e-7):
+                    raise ValueError('Random push time limits must align with physics ticks')
 
     def _id(self, kind, name):
         index = mujoco.mj_name2id(self.model, kind, name)
@@ -119,6 +162,18 @@ class FingerHeightEnv:
         self.success_ever = False
         self.first_success_time = None
         self._ready = True
+        self.push_point_index = self.push_direction_index = 0
+        self.push_force = np.zeros(3)
+        self.push_start_tick = self.push_duration_ticks = self.push_applied_ticks = 0
+        self.push_sampled = False
+        if self.config.push_enabled:
+            c, rng, dt = self.config, self.np_random, self.model.opt.timestep
+            self.push_point_index = int(rng.integers(len(PUSH_POINTS)))
+            self.push_direction_index = int(rng.integers(len(PUSH_DIRECTIONS)))
+            self.push_sampled = bool(rng.random() < c.push_probability)
+            self.push_force = PUSH_DIRECTIONS[self.push_direction_index] * rng.uniform(c.push_force_min_n, c.push_force_max_n)
+            self.push_start_tick = int(rng.integers(round(c.push_start_min_s/dt), round(c.push_start_max_s/dt)+1))
+            self.push_duration_ticks = int(rng.integers(round(c.push_duration_min_s/dt), round(c.push_duration_max_s/dt)+1))
         self._update_kinematics()
         return self._observation(), self._info({})
 
@@ -157,6 +212,13 @@ class FingerHeightEnv:
             "hold_seconds": self.held, "is_success": self.success,
             "success_ever": self.success_ever, "first_success_time": self.first_success_time,
             "reward_terms": terms,
+            "push_sampled": self.push_sampled,
+            "push_point": list(PUSH_POINTS)[self.push_point_index],
+            "push_direction_index": self.push_direction_index,
+            "push_force_world_n": self.push_force.tolist(),
+            "push_start_tick": self.push_start_tick,
+            "push_duration_ticks": self.push_duration_ticks,
+            "push_applied_ticks": self.push_applied_ticks,
         }
 
     def step(self, action):
@@ -179,7 +241,9 @@ class FingerHeightEnv:
             if not valid or np.any(self.data.warning.number):
                 terminated = True
                 break
-            qualifies = abs(self.height_error) <= c.height_tolerance and self.tip_speed <= c.speed_limit
+            eligible = not self.push_sampled or round(self.data.time/self.model.opt.timestep) > self.push_start_tick+self.push_duration_ticks
+            qualifies = (eligible and abs(self.height_error) <= c.height_tolerance
+                         and (not c.require_low_speed or self.tip_speed <= c.speed_limit))
             self.held = min(self.held + self.model.opt.timestep, c.hold_seconds) if qualifies else 0.0
             self.success = self.held + 1e-9 >= c.hold_seconds
             if self.success and not self.success_ever:
@@ -205,6 +269,16 @@ class FingerHeightEnv:
 
     def _physics_step(self):
         """Advance one physical step; local experiments can override this hook."""
+        if self.config.push_enabled:
+            self.data.qfrc_applied[:] = 0
+            tick = round(self.data.time/self.model.opt.timestep)
+            active = self.push_sampled and self.push_start_tick <= tick < self.push_start_tick+self.push_duration_ticks
+            if active:
+                body_name, local = list(PUSH_POINTS.values())[self.push_point_index]
+                body = self._id(mujoco.mjtObj.mjOBJ_BODY, body_name)
+                point = self.data.xpos[body] + self.data.xmat[body].reshape(3, 3) @ np.asarray(local)
+                mujoco.mj_applyFT(self.model, self.data, self.push_force, np.zeros(3), point, body, self.data.qfrc_applied)
+                self.push_applied_ticks += 1
         mujoco.mj_step(self.model, self.data)
         self._update_kinematics()
 

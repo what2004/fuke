@@ -58,6 +58,7 @@ def parse_args(argv=None):
     parser.add_argument("--num-timesteps", type=int)
     parser.add_argument("--num-envs", type=int)
     parser.add_argument("--num-eval-envs", type=int)
+    parser.add_argument('--restore-checkpoint', type=Path, help='warm start policy and observation normalizer; new critic and optimizer')
     return parser.parse_args(argv)
 
 
@@ -121,11 +122,29 @@ def build_plan(args):
         raise ValueError("Task control_dt must be a multiple of the XML timestep")
     if episode_length < 1 or not math.isclose(episode_length * task.control_dt, task.episode_seconds):
         raise ValueError("episode_seconds must be a multiple of control_dt")
+    restore = None
+    if args.restore_checkpoint is not None:
+        restore = args.restore_checkpoint.resolve()
+        saved = json.loads((restore/'ppo_network_config.json').read_text())
+        size = saved.get('observation_size')
+        if size != 16 and not (isinstance(size, dict) and size.get('shape') == [16]):
+            raise ValueError('Warm start requires a 16-observation checkpoint')
+        if saved.get('action_size') != 1 or saved.get('normalize_observations') != ppo['normalize_observations']:
+            raise ValueError('Warm start action/normalization configuration differs')
+        for key, value in network.items():
+            if saved['network_factory_kwargs'].get(key) != value:
+                raise ValueError(f'Warm start network differs: {key}')
+        metadata_path = restore.parent.parent/'metadata.json'
+        if metadata_path.is_file():
+            old_hash = json.loads(metadata_path.read_text()).get('model_sha256')
+            if old_hash != hashlib.sha256(args.xml.read_bytes()).hexdigest():
+                raise ValueError('Warm start model differs from recorded hand.xml')
     return {"seed": seed, "smoke": args.smoke, "ppo": ppo, "network": network,
             "task": asdict(task), "episode_length": episode_length, "action_repeat": 1,
             "sim_dt": sim_dt, "substeps": substeps,
             "xml_path": str(args.xml.resolve()), "task_config_path": str(args.task_config.resolve()),
-            "output_dir": str(args.output_dir.resolve()), "run_name": args.run_name}
+            "output_dir": str(args.output_dir.resolve()), "run_name": args.run_name,
+            'restore_checkpoint': str(restore) if restore else None}
 
 
 def load_backend():
@@ -188,6 +207,8 @@ def run_training(plan):
               "action_repeat": 1, "seed": plan["seed"], "network_factory": network_factory,
               "wrap_env_fn": functools.partial(backend.wrapper.wrap_for_brax_training, full_reset=True),
               "save_checkpoint_path": "", "progress_fn": None}
+    if plan.get('restore_checkpoint'):
+        kwargs.update(restore_checkpoint_path=plan['restore_checkpoint'], restore_value_fn=False)
     check_signature(backend.train, kwargs)
     check_signature(backend.wrapper.wrap_for_brax_training,
                     {"episode_length": env.episode_length, "action_repeat": 1, "full_reset": True})
@@ -219,7 +240,12 @@ def run_training(plan):
         with (run_dir / "progress.jsonl").open("a") as output:
             output.write(json.dumps(record, allow_nan=False) + "\n")
         score = record["metrics"].get("eval/episode_reward", "n/a")
-        print(f"steps={int(num_steps):,}  eval_reward={score}  elapsed={record['elapsed_seconds']:.1f}s", flush=True)
+        count = record['metrics'].get('eval/episode_push_episode_count', 0)
+        recovery = ''
+        if count > 0:
+            rate = record['metrics']['eval/episode_push_episode_recovered']/count
+            recovery = f'  push_recovery_rate={rate:.1%}'
+        print(f"steps={int(num_steps):,}  eval_reward={score}{recovery}  elapsed={record['elapsed_seconds']:.1f}s", flush=True)
 
     kwargs.update(save_checkpoint_path=str(checkpoints), progress_fn=progress)
     print(f"Run directory: {run_dir}\nCompiling and training with Brax PPO ...", flush=True)

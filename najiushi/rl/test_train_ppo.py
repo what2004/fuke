@@ -29,6 +29,24 @@ class TrainingEntryTests(unittest.TestCase):
         self.assertEqual(smoke["ppo"]["num_timesteps"], 2048)
         self.assertEqual(smoke["ppo"]["num_updates_per_batch"], 1)
 
+    def test_random_push_task_plan_and_warm_start_validation(self):
+        task = Path(__file__).with_name('config_push.json')
+        plan = self.plan('--task-config', str(task))
+        self.assertEqual(plan['episode_length'], 600)
+        self.assertTrue(plan['task']['push_enabled'])
+        self.assertFalse(plan['task']['require_low_speed'])
+        with tempfile.TemporaryDirectory() as tmp:
+            checkpoint = Path(tmp)
+            config = dict(observation_size={'shape': [16], 'dtype': 'float32'}, action_size=1,
+                          normalize_observations=True, network_factory_kwargs=plan['network'])
+            (checkpoint/'ppo_network_config.json').write_text(json.dumps(config))
+            warm = self.plan('--task-config', str(task), '--restore-checkpoint', str(checkpoint))
+            self.assertEqual(warm['restore_checkpoint'], str(checkpoint.resolve()))
+            config['action_size'] = 2
+            (checkpoint/'ppo_network_config.json').write_text(json.dumps(config))
+            with self.assertRaisesRegex(ValueError, 'action/normalization'):
+                self.plan('--restore-checkpoint', str(checkpoint))
+
     def test_invalid_config_fails_before_training(self):
         for args in [("--num-envs", "63"), ("--seed", "-1"),
                      ("--num-timesteps", "0"), ("--run-name", "../unsafe")]:

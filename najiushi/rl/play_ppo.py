@@ -4,7 +4,7 @@ Uses that run's model, task configuration, native environment source snapshot,
 network configuration and saved observation normalizer. No training occurs.
 """
 import argparse
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 import csv
 from datetime import datetime
 import hashlib
@@ -13,8 +13,28 @@ import json
 import os
 from pathlib import Path
 import sys
+import threading
 import time
 from zoneinfo import ZoneInfo
+
+
+@contextmanager
+def replay_viewer(model, data):
+    """Wait for MuJoCo's render thread before Python tears down GLFW."""
+    from mujoco import viewer
+    existing_threads = set(threading.enumerate())
+    window = viewer.launch_passive(model, data, show_right_ui=False)
+    # launch_passive starts _launch_internal as a daemon on Linux. Handle.close
+    # requests exit but does not join it, allowing atexit to terminate GLFW early.
+    render_threads = [thread for thread in threading.enumerate()
+                      if thread not in existing_threads
+                      and thread.name.endswith('(_launch_internal)')]
+    try:
+        yield window
+    finally:
+        window.close()
+        for thread in render_threads:
+            thread.join()
 
 
 def load_run(run_dir, checkpoint_name=None):
@@ -47,6 +67,15 @@ def load_run(run_dir, checkpoint_name=None):
     return env, checkpoint
 
 
+def normalize_observation_size(size):
+    """Accept a flat size or the serialized ShapeDtypeStruct used by Brax."""
+    if isinstance(size, dict) and size.get('shape') == [16]:
+        return 16
+    if type(size) is int and size == 16:
+        return 16
+    raise ValueError(f'Expected a flat 16-observation finger policy, got {size!r}')
+
+
 def load_policy(checkpoint):
     """Restore recorded network defaults, including nullable initializer fields.
 
@@ -59,7 +88,8 @@ def load_policy(checkpoint):
     from brax.training.agents.ppo import networks as ppo_networks
     from ml_collections import config_dict
     config = json.loads((checkpoint / 'ppo_network_config.json').read_text())
-    if config['observation_size'] != 16 or config['action_size'] != 1:
+    config['observation_size'] = normalize_observation_size(config['observation_size'])
+    if config['action_size'] != 1:
         raise ValueError('This replay expects a 16-observation, one-action finger policy')
     kwargs = config['network_factory_kwargs']
     for key, value in list(kwargs.items()):
@@ -97,8 +127,7 @@ def main(argv=None):
     env.reset(seed=args.seed)
     context = nullcontext(None)
     if args.render:
-        from mujoco import viewer
-        context = viewer.launch_passive(env.model, env.data, show_right_ui=False)
+        context = replay_viewer(env.model, env.data)
     fields = ['episode', 'time', 'action', 'command_length', 'tendon_length', 'height', 'tip_speed',
               'hold_seconds', 'is_success', 'success_ever', 'reward', 'mcp_deg', 'pip_deg', 'dip_deg']
     results = []

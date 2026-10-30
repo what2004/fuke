@@ -12,3 +12,5 @@ najiushi/rl/runs/
 .aws/
 .codex/
 *.pyo
+downloads/
+MUJOCO_LOG.TXT

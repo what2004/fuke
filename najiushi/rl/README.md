@@ -343,3 +343,85 @@ MJX 真引擎和 Brax 训练的最新本机 CPU 检查记录见 `server/VALIDATI
 策略输出采用确定性模式，但传感器噪声仍按训练配置启用。
 普通 MuJoCo 与 MJX 的物理和随机数实现存在细小差异，本机回放是直观检查和补充评估，
 不能保证奖励与服务器逐位一致。
+
+### 已训练 PPO 的小推力回放测试
+
+`check_policy_push.py` 加载下载运行的模型、环境快照、配置及 PPO 权重，先运行无推力对照，
+再使用相同随机种子运行有推力回放。两次均由策略持续控制肌腱，不使用固定腱长控制。
+默认回放 12 秒，第 4 秒在 `index_tip` 世界位置施加 `[0, 0, -0.1] N`，持续 2 秒（第 6 秒卸载）；
+每个物理子步通过 `mj_applyFT` 施力，脉冲结束后清除外力。
+
+```bash
+/home/zhili/aerofuke/.venv-server-check/bin/python \
+  /home/zhili/aerofuke/najiushi/rl/check_policy_push.py \
+  --run-dir /home/zhili/aerofuke/downloads/finger-height-20261029-193528-0f1992 \
+  --render
+```
+
+可用 `--force 0 0 -0.5`、`--push-start 4`、`--push-duration 2` 修改扰动，
+用 `--episode-seconds 12` 设置回放时长。延长仅作用于本地回放；策略输入的时间观测
+仍按原训练的 8 秒倒计时，超过后保持零，8 秒之后的策略表现需单独看待。
+结果保存在运行目录的 `policy-push-时间/`，包含 1 ms 物理轨迹、20 ms 策略动作、
+`summary.json` 和 `recovery.png`。本实验只用高度误差及连续高度达标时间评价，
+仍记录速度，不更改原训练的奖励、成功条件或 checkpoint，也不执行 PPO 更新。
+`height_hold_completed_after_release_s` 是卸载后完成连续高度保持的时间；
+若扰动未使高度越界，这个值不能解读为一次从失败状态恢复所需的时间。
+
+带窗口时会显示时间、`PUSH ON` 状态及红色施力方向箭头；箭头固定长 4 cm，仅供显示，
+不是位移或力大小的比例尺。默认按正常速度播放；可选 `--slowdown 5` 将 12 秒物理过程慢放到约 60 秒，
+不改变物理步长、策略控制周期或推力持续时间。`--keep-open` 在结束时冻结最终状态，
+手动关闭窗口后保存结果并退出。例如在上一条命令后追加：
+`--force 0 0 -0.5 --slowdown 5 --keep-open`。
+
+施力点通过 `--point` 指定：`tip` 指尖（默认），`distal` 远节圆柱中心，
+`middle` 中节圆柱中心，`proximal` 近节圆柱中心。施力点随指节移动，
+箭头起点跟随选中的点；CSV 保存每个物理步施力前的世界坐标和施力点名称。
+`--force FX FY FZ` 单位为 N，始终是世界方向：`0 0 -1` 向下，`0 0 1` 向上，
+`0 -1 0` 沿 -Y，`0 1 0` 沿 +Y。当前手指关节只绕 X 轴转动，
+纯 X 方向的力没有绕该轴的力矩；模型没有侧摆自由度，因而不适合用纯 X 力观察侧向摆动。
+例：`--render --point middle --force 0 -1 0 --push-duration 2 --episode-seconds 12`。
+
+### 随机施力点和方向的 PPO 训练
+
+`finger_env.py` 的 `PUSH_POINTS` 定义 10 个随指节移动的点：近、中、远节各自长度的
+25%、50%、75% 处，以及指尖。位置由指节坐标变换每个物理步更新，不修改质量、惯量或碰撞形状。
+`PUSH_DIRECTIONS` 是世界 YZ 平面每隔 45° 的 8 个单位方向；不采样无侧摆自由度对应的纯 X 力。
+每回合 reset 独立选一个点、一个方向、一个力值以及一次扰动的开始和持续时长。
+施力期间点跟随指节，世界方向及幅值保持不变，不在每个控制步重新抽方向。
+扰动参数不加入策略的 16 维观测；策略根据已有状态和腱长观测作出反应。
+
+- `config_push.json`：80% 回合有一次扰动，20% 无扰动；幅值均匀采样 1～4 N。
+- `config_push_warmup.json`：相同点与方向，幅值 0.25～1 N，供初期练习。
+- 每回合 12 秒；第 3～5 秒间随机开始，持续 0.5～2 秒。
+- 新配置 `require_low_speed=false`，速度与关节速度惩罚权重为零，先只考核高度。
+  `config.json` 仍是原来的无扰动、要求低速的任务。
+- 有扰动回合只从卸载后的第一个物理步开始累计保持及成功奖励，需在 16 cm ±5 mm
+  内连续保持 1 秒。受力期间仍有逐物理步的高度跟踪奖励。
+- `push_recovery_rate` 用真正抽到扰动的回合作分母，避免无扰动回合冲高恢复率。
+  这是撤力后曾连续达标的比例，不代表受力期间始终在误差带内。
+
+先在本机验证（不训练）：
+
+```bash
+/home/zhili/aerofuke/.venv-server-check/bin/python /home/zhili/aerofuke/najiushi/rl/check_random_push.py
+/home/zhili/aerofuke/.venv-server-check/bin/python /home/zhili/aerofuke/najiushi/rl/train_ppo.py \
+  --task-config /home/zhili/aerofuke/najiushi/rl/config_push.json --dry-run
+```
+
+同步代码到服务器后，可先从现有权重开始小力训练：
+
+```bash
+cd /root/finger-v100
+bash server/run.sh smoke --task-config najiushi/rl/config_push_warmup.json
+bash server/run.sh train --task-config najiushi/rl/config_push_warmup.json \
+  --restore-checkpoint najiushi/rl/runs/finger-height-20261029-193528-0f1992/checkpoints/000001032192
+```
+
+`--restore-checkpoint` 恢复策略及观测归一化参数，重新初始化价值网络、优化器和训练步数，
+属于新任务上的继续学习，不是完整恢复旧训练进程。强扰动阶段将 `--task-config` 换成
+`config_push.json`，并将 `--restore-checkpoint` 指向小力阶段的 checkpoint。
+两个强度配置是手动分阶段使用，当前未实现自动课程升级；不要分别从零训练并当成连续课程。
+
+1～4 N 的所有组合不保证物理上都可控：单输入腱驱动、5 N 执行器拉力上限、关节限位
+和弹簧都会影响能力。训练后需按点、方向、力值分组评估，并与固定腱长及无扰动控制比较。
+当前的 0.5～2 秒矩形力用于恢复训练；未来若要模拟短暂碰撞应另设更短的脉冲时长。
